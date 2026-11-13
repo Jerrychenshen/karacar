@@ -652,14 +652,21 @@
   // ─────────────────────────────────────────────────────────────────────────
   // Original vocals ⇄ backing track
   // ─────────────────────────────────────────────────────────────────────────
+  // Runtime-only cache: never serialize promises or trust old saved alt=null.
+  const altCache = new WeakMap();
   async function findAlt(song) {
-    if (song.alt !== undefined) return song.alt;
-    if (!song._altP) {
-      song._altP = api('/api/instrumental?' + new URLSearchParams({ title: song.title, channel: song.channel || '', duration: song.duration || 0, id: song.id }))
-        .then((d) => { song.alt = d.alt; }).catch(() => { song.alt = null; })
-        .then(() => { if (S.current === song) updateVocalFab(); return song.alt; });
-    }
-    return song._altP;
+    const now = Date.now();
+    const hit = altCache.get(song);
+    if (hit && hit.expires > now) return hit.promise;
+    delete song.alt;
+    delete song._altP;
+    const entry = { expires: now + 5 * 60 * 1000 };
+    entry.promise = api('/api/instrumental?' + new URLSearchParams({ title: song.title, channel: song.channel || '', duration: song.duration || 0, id: song.id }))
+      .then((d) => { song.alt = d.alt; return d.alt; })
+      .catch(() => { altCache.delete(song); return undefined; })
+      .finally(() => { if (S.current === song) updateVocalFab(); });
+    altCache.set(song, entry);
+    return entry.promise;
   }
   function updateVocalFab() {
     const b = $('#vocal-fab');

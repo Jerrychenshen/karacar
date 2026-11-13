@@ -195,11 +195,11 @@ const NOISE_RE = /\b(?:official|mv|m\/v|lyrics?|audio|video|hd|4k|live|remaster(
 export function cleanTitle(rawTitle, channel) {
   let t = String(rawTitle || '');
   // "Artist「Song」..." / "周杰倫 Jay Chou【晴天 Sunny Day】" — the bracket holds the song name.
-  const quoted = /^([^「【『《\[]+?)\s*[「【『《]([^」】』》]+)[」】』》]/.exec(t);
+  const quoted = /^([^「【『《〈\[]+?)\s*[「【『《〈\[]([^」】』》〉\]]+)[」】』》〉\]]/.exec(t);
   if (quoted && !NOISE_RE.test(quoted[2]) && !/[-–—]/.test(quoted[1])) {
     return { track: quoted[2].trim(), artist: quoted[1].trim() };
   }
-  t = t.replace(/[【\[(（「『][^】\])）」』]*[】\])）」』]/g, (m) => {
+  t = t.replace(/[【\[(（「『《〈][^】\])）」』》〉]*[】\])）」』》〉]/g, (m) => {
     // Keep bracket content that looks like the actual song name (e.g. 周杰倫【晴天】), drop noise tags.
     const inner = m.slice(1, -1);
     return NOISE_RE.test(inner) ? ' ' : ` ${inner} `;
@@ -366,27 +366,70 @@ async function lyricVariant(track, art, duration) {
 }
 
 // Find a backing-track (no vocals) upload of the same song on YouTube, close in length.
-const INST_RE = /伴奏|伴唱|消音|去人声|去人聲|純音樂|纯音乐|instrumental|karaoke|off\s*vocal|inst\.?\b|カラオケ|オフボーカル|mr\b|노래방/i;
-async function findInstrumental({ title, channel, duration, id }) {
+// Keep original English metadata. Only a verified bilingual alias may omit a subtitle.
+const INST_RE = /伴奏|伴唱|消音|去人声|去人聲|純音樂|纯音乐|\b(?:instrumental|karaoke|off\s*vocal|inst\.?|mr)\b|カラオケ|オフボーカル|노래방/i;
+const INST_VERSION_RE = /\b(?:cover|live|remix|dj|piano|acoustic)\b|翻唱|合唱|對唱|对唱|二重唱|簡譜|简谱|现场|現場|粵|粤|廣東話|广东话|台語|台语|閩南|闽南|日語|日语|日文版|英文版|英語版|英语版|韓語|韩语|男版|女版|男聲|男声|女聲|女声|升調|升调|降調|降调|[+-]\d|\bkey\b|鋼琴|钢琴|吉他|可轉|可转|人聲視頻|人声视频/i;
+
+function artistNames(artist) {
+  // An explicit bilingual artist prefix, not arbitrary mixed-language metadata.
+  const m = /^([\p{Script=Han}·]{2,})\s+[A-Za-z][A-Za-z .'-]*$/u.exec(artist);
+  return [...new Set([artist, ...(m ? [m[1], artist.slice(m[1].length).trim()] : [])])].filter(Boolean);
+}
+
+export function instrumentalIdentity({ title, channel }) {
   const { track, artist } = cleanTitle(title, channel);
-  const base = `${stripLatin(artist)} ${stripLatin(track)}`.trim();
-  const seen = new Set([id]);
-  const picks = [];
-  for (const q of [`${base} 伴奏`, `${base} instrumental karaoke`]) {
-    for (const r of await searchYoutube(q).catch(() => [])) {
+  const artists = artistNames(artist);
+  // This verified subtitle belongs to this artist/song pair. Do not guess that
+  // every mixed-language song name has a disposable English suffix.
+  const aliases = [['李佳薇', '甲乙丙丁 Strangers', '甲乙丙丁'], ['周杰倫', '晴天 Sunny Day', '晴天']];
+  const bilingual = aliases.find(([a, t]) => normName(track) === normName(t) && artists.some(n => normName(n) === normName(a)));
+  return { track, artist, artists, tracks: bilingual ? [track, bilingual[2]] : [track] };
+}
+
+export function instrumentalQueries(args) {
+  const identity = instrumentalIdentity(args);
+  const { artist, track, artists, tracks } = identity;
+  const full = `${artist} ${track}`.trim();
+  const short = `${artists.find(a => /^[\p{Script=Han}·]+$/u.test(a)) || artist} ${tracks.at(-1)}`.trim();
+  // At most four upstream calls, full metadata first; no artist-free query.
+  return [...new Set([`${full} 伴奏`, `${full} instrumental karaoke`, `${short} 伴奏`, `${short} instrumental karaoke`])];
+}
+
+function identityPhrase(text, name) {
+  const fold = s => String(s || '').toLowerCase().replace(/./gu, ch => T2S[ch] || ch);
+  const words = fold(name).match(/[\p{L}\p{N}]+/gu) || [];
+  if (!words.length) return false;
+  const escaped = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^\\p{L}\\p{N}]*');
+  const boundary = ch => /\p{Script=Han}/u.test(ch) ? '\\p{Script=Han}' : '\\p{L}\\p{N}';
+  const start = boundary(words[0][0]), end = boundary(words.at(-1).at(-1));
+  return new RegExp(`(?<![${start}])${escaped}(?![${end}])`, 'iu').test(fold(text));
+}
+
+export function instrumentalRejection(args, r) {
+  if (r.id === args.id) return 'same-id';
+  if (!INST_RE.test(r.title)) return 'no-marker';
+  if (INST_VERSION_RE.test(r.title)) return 'version-or-language';
+  const identity = instrumentalIdentity(args);
+  if (!identity.tracks.some(t => identityPhrase(r.title, t))) return 'title-identity';
+  if (!identity.artists.some(a => identityPhrase(`${r.title} | ${r.channel || ''}`, a))) return 'artist-identity';
+  if (!(args.duration > 0 && r.duration > 0) || Math.abs(r.duration - args.duration) > 20) return 'duration';
+  return null;
+}
+
+export async function findInstrumental(args, search = searchYoutube) {
+  const seen = new Set();
+  for (const q of instrumentalQueries(args)) {
+    const picks = [];
+    for (const r of await search(q).catch(() => [])) {
       if (seen.has(r.id)) continue;
       seen.add(r.id);
-      if (!INST_RE.test(r.title) || /cover|翻唱|live|现场|現場|remix|dj/i.test(r.title)) continue;
-      const name = stripLatin(track).toLowerCase();
-      if (name && !r.title.toLowerCase().includes(name)) continue;
-      const diff = duration && r.duration ? Math.abs(r.duration - duration) : 30;
-      if (diff > 20) continue;
-      picks.push({ id: r.id, title: r.title, duration: r.duration, diff });
+      if (instrumentalRejection(args, r)) continue;
+      picks.push({ id: r.id, title: r.title, duration: r.duration, diff: Math.abs(r.duration - args.duration) });
     }
-    if (picks.length) break;
+    picks.sort((a, b) => a.diff - b.diff || a.id.localeCompare(b.id));
+    if (picks.length) return { alt: picks[0] };
   }
-  picks.sort((a, b) => a.diff - b.diff);
-  return { alt: picks[0] || null };
+  return { alt: null };
 }
 
 // Fold the common traditional/simplified pairs seen in song titles so 周杰倫 matches 周杰伦.
@@ -628,6 +671,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+  res.setHeader('Link', '</source-code.tar.gz>; rel="source", </LICENSE>; rel="license"');
   try {
     if (p === '/api/search') {
       if (limited(req, 'search')) return sendJson(res, 429, { error: 'rate_limited' });
@@ -653,7 +697,7 @@ const server = http.createServer(async (req, res) => {
         duration: Math.min(Number(sp.get('duration')) || 0, 36000), id: (sp.get('id') || '').slice(0, 20)
       };
       if (!args.title) return sendJson(res, 400, { error: 'empty' });
-      return sendJson(res, 200, await cached('i:' + JSON.stringify(args), 6 * 3600 * 1000, () => findInstrumental(args)));
+      return sendJson(res, 200, await cached('i:' + JSON.stringify(args), 5 * 60 * 1000, () => findInstrumental(args)));
     }
     if (p === '/api/health') return sendJson(res, 200, { ok: true });
     if (p.startsWith('/api/room')) {
