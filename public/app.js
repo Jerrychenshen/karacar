@@ -216,6 +216,19 @@
   let playerReady = false;
   let pendingVideo = null;
 
+  const musicVolume = window.createMusicVolume({
+    storage: { getItem: k => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
+    notify: ({ value, status }) => {
+      const input = $('#music-volume');
+      input.value = value;
+      input.style.setProperty('--pct', value + '%');
+      $('#music-volume-value').textContent = value + '%';
+      $('#music-volume-status').textContent = t('volume_' + status);
+    }
+  });
+  $('#music-volume').addEventListener('input', e => musicVolume.choose(Number(e.target.value)));
+  musicVolume.render();
+
   function createPlayer() {
     if (player || !window.YT || !YT.Player) return;
     player = new YT.Player('yt', {
@@ -225,7 +238,8 @@
       events: {
         onReady: () => {
           playerReady = true;
-          if (pendingVideo) { player.loadVideoById(pendingVideo); pendingVideo = null; }
+          musicVolume.ready(player);
+          if (pendingVideo) { loadVideo(pendingVideo); pendingVideo = null; }
         },
         onStateChange: onPlayerState,
         onError: onPlayerError
@@ -237,7 +251,7 @@
   if (window.YT && YT.Player) createPlayer();
 
   function loadVideo(id) {
-    if (playerReady) player.loadVideoById(id);
+    if (playerReady) { musicVolume.apply(); player.loadVideoById(id); musicVolume.apply(); }
     else { pendingVideo = id; createPlayer(); }
   }
 
@@ -267,6 +281,7 @@
 
   let lastAutoResume = 0;
   function onPlayerState(e) {
+    musicVolume.apply();
     const st = e.data;
     const wasPlaying = S.playing;
     S.playing = st === 1;
@@ -291,7 +306,7 @@
       S.current.alt = null;
       S.inst = false;
       lastAutoResume = Date.now();
-      player.loadVideoById({ videoId: S.current.id, startSeconds: at });
+      loadVideo({ videoId: S.current.id, startSeconds: at });
       updateVocalFab();
       toast(t('no_inst'), 3000);
       return;
@@ -688,7 +703,7 @@
     S.instScale = S.inst && alt.duration && s.duration && Math.abs(alt.duration - s.duration) > 2 ? alt.duration / s.duration : 1;
     const start = S.inst ? at / 1000 * S.instScale : at / 1000;
     clock.lastRaw = -1;
-    player.loadVideoById({ videoId: S.inst ? alt.id : s.id, startSeconds: Math.max(0, start) });
+    loadVideo({ videoId: S.inst ? alt.id : s.id, startSeconds: Math.max(0, start) });
     updateVocalFab();
     toast(t(S.inst ? 'inst_on' : 'inst_off'), 1500);
   }
@@ -1218,6 +1233,7 @@
 
   function refreshLanguage() {
     I18N.apply();
+    musicVolume.render();
     renderTabs();
     renderModeSeg();
     renderQueue();

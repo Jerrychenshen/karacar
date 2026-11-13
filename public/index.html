@@ -131,6 +131,13 @@
           <input type="range" id="seek" min="0" max="100" step="0.1" value="0" aria-label="Seek">
           <span id="t-dur">0:00</span>
         </div>
+        <div class="music-volume">
+          <label for="music-volume" data-i18n="music_volume"></label>
+          <input type="range" id="music-volume" min="0" max="100" step="1" value="100" aria-describedby="music-volume-note music-volume-status">
+          <output id="music-volume-value" for="music-volume">100%</output>
+          <span id="music-volume-status" role="status"></span>
+          <p id="music-volume-note" data-i18n="music_volume_note"></p>
+        </div>
         <div class="ctrl-row">
           <div class="np" id="np">
             <img id="np-thumb" alt="">
@@ -187,6 +194,7 @@
 <script src="/i18n.js"></script>
 <script src="/common.js"></script>
 <script src="/hot.js"></script>
+<script src="/music-volume.js"></script>
 <script src="/app.js"></script>
   <a href="/source-code.tar.gz" download style="display:block;text-align:center;padding:12px;font-size:12px">Source · AGPL-3.0 · Modified KaraCar</a>
 </body>

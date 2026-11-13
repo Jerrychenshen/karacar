@@ -4,6 +4,7 @@ window.I18N = (function () {
 
   const D = {
     en: {
+      music_volume: 'Music volume', music_volume_note: 'Music only; not microphone gain. Some devices (including iOS) require system volume controls.', volume_pending: 'Requested · awaiting player', volume_readback: 'Player reports setting · audio unverified', volume_muted: 'Player muted · raise slider to unmute', volume_unsupported: 'Not confirmed · use device volume controls',
       nav_search: 'Search', nav_library: 'Playlists', nav_hot: 'Hot songs', nav_guests: 'Passengers', nav_player: 'Now singing',
       search_placeholder: 'Song, artist or a line of lyrics…', search_btn: 'Search', searching: 'Searching YouTube…',
       no_results: 'No results. Try another keyword.', search_error: 'Search failed. Check the connection and try again.',
@@ -42,6 +43,7 @@ window.I18N = (function () {
       g_expired: 'This code has expired. Ask the driver to show a new QR code.', g_queue: 'Up next', g_now: 'Now singing', g_connecting: 'Connecting to the car…'
     },
     'zh-CN': {
+      music_volume: '音乐音量', music_volume_note: '仅调音乐，不调麦克风。部分设备（包括 iOS）需使用系统音量。', volume_pending: '设定值 · 等待播放器', volume_readback: '播放器已回报设定 · 听感未验证', volume_muted: '播放器已静音 · 调高滑块可取消', volume_unsupported: '未确认生效 · 请使用设备音量',
       nav_search: '搜索', nav_library: '歌单', nav_hot: '热门', nav_guests: '乘客点歌', nav_player: '演唱中',
       search_placeholder: '歌名、歌手或一句歌词…', search_btn: '搜索', searching: '正在搜索 YouTube…',
       no_results: '没有结果，换个关键词试试。', search_error: '搜索失败，请检查网络后重试。',
@@ -80,6 +82,7 @@ window.I18N = (function () {
       g_expired: '二维码已过期，请让司机刷新二维码。', g_queue: '接下来', g_now: '正在演唱', g_connecting: '正在连接车机…'
     },
     'zh-TW': {
+      music_volume: '音樂音量', music_volume_note: '僅調音樂，不調麥克風。部分裝置（包括 iOS）需使用系統音量。', volume_pending: '設定值 · 等待播放器', volume_readback: '播放器已回報設定 · 聽感未驗證', volume_muted: '播放器已靜音 · 調高滑桿可取消', volume_unsupported: '未確認生效 · 請使用裝置音量',
       nav_search: '搜尋', nav_library: '歌單', nav_hot: '熱門', nav_guests: '乘客點歌', nav_player: '演唱中',
       search_placeholder: '歌名、歌手或一句歌詞…', search_btn: '搜尋', searching: '正在搜尋 YouTube…',
       no_results: '沒有結果，換個關鍵字試試。', search_error: '搜尋失敗，請檢查網路後重試。',

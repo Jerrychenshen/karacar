@@ -27,3 +27,17 @@ corresponding deployed modified source.
 No changes to proxy, credentials, DNS, firewall or other services. Archive
 contains app source, license, tests and this note; excludes .git, data and itself.
 Recreate with `sh make-source.sh`. No compilation or dependency install needed.
+
+
+Music-only volume (2026-11-13): accessible 0–100% touch slider in player
+controls, English/Simplified/Traditional Chinese labels, local-only preference
+with storage-error fallback. Apply through documented YouTube setVolume API
+before and after song/track loads, on ready and state changes. Preserve a
+sensible existing player volume when no preference exists. Zero sets gain to
+zero; an explicit positive slider gesture can unmute, passive rendering cannot.
+A bounded delayed getVolume/isMuted readback distinguishes pending, muted,
+reported and unconfirmed settings; reported values do not verify audible gain.
+Some browsers (including iOS) require device controls. This does not control
+microphone gain or vehicle system volume. First-frame audio behavior, Tesla
+microphone balance and real vehicle acceptance require physical-device testing.
+No dependencies, server/room/library/matching changes or upstream sync.
