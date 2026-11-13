@@ -377,12 +377,18 @@ function artistNames(artist) {
 }
 
 export function instrumentalIdentity({ title, channel }) {
-  const { track, artist } = cleanTitle(title, channel);
+  // Accompaniment-only cleanup; shared lyrics parsing remains unchanged.
+  title = String(title || '').replace(/【高音[質质]】/g, '')
+    .replace(/[（(]原唱[：:][^）)]*[）)]/g, '')
+    .replace(/『[^』]*[，,。][^』]*』/g, '')
+    .replace(/\s+(?:现场版|現場版)\s+(?:中国好声音|中國好聲音)2020.*$/u, '');
+  let { track, artist } = cleanTitle(title, channel);
+  if (instFold(artist) === instFold('Eric周興哲')) artist = '周興哲 Eric Chou';
   const artists = artistNames(artist);
   // This verified subtitle belongs to this artist/song pair. Do not guess that
   // every mixed-language song name has a disposable English suffix.
-  const aliases = [['李佳薇', '甲乙丙丁 Strangers', '甲乙丙丁'], ['周杰倫', '晴天 Sunny Day', '晴天']];
-  const bilingual = aliases.find(([a, t]) => normName(track) === normName(t) && artists.some(n => normName(n) === normName(a)));
+  const aliases = [['李佳薇', '甲乙丙丁 Strangers', '甲乙丙丁'], ['周杰倫', '晴天 Sunny Day', '晴天'], ['周興哲', '永不失聯的愛 Unbreakable Love', '永不失聯的愛'], ['周興哲', 'Unbreakable Love', '永不失聯的愛']];
+  const bilingual = aliases.find(([a, t]) => instFold(track).replace(/\s/g, '') === instFold(t).replace(/\s/g, '') && artists.some(n => instFold(n) === instFold(a)));
   return { track, artist, artists, tracks: bilingual ? [track, bilingual[2]] : [track] };
 }
 
@@ -395,8 +401,9 @@ export function instrumentalQueries(args) {
   return [...new Set([`${full} 伴奏`, `${full} instrumental karaoke`, `${short} 伴奏`, `${short} instrumental karaoke`])];
 }
 
+const instFold = s => String(s || '').toLowerCase().replace(/./gu, ch => ({聯:'联',興:'兴',單:'单',純:'纯'}[ch] || T2S[ch] || ch));
 function identityPhrase(text, name) {
-  const fold = s => String(s || '').toLowerCase().replace(/./gu, ch => T2S[ch] || ch);
+  const fold = instFold;
   const words = fold(name).match(/[\p{L}\p{N}]+/gu) || [];
   if (!words.length) return false;
   const escaped = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^\\p{L}\\p{N}]*');
@@ -411,25 +418,30 @@ export function instrumentalRejection(args, r) {
   if (INST_VERSION_RE.test(r.title)) return 'version-or-language';
   const identity = instrumentalIdentity(args);
   if (!identity.tracks.some(t => identityPhrase(r.title, t))) return 'title-identity';
-  if (!identity.artists.some(a => identityPhrase(`${r.title} | ${r.channel || ''}`, a))) return 'artist-identity';
+  if (!identity.artists.some(a => (identityPhrase(`${r.title} | ${r.channel || ''}`, a) || (/^[\p{Script=Han}]{2,4}$/u.test(a) && identityPhrase(r.title, a+'版'))))) return 'artist-identity';
   if (!(args.duration > 0 && r.duration > 0) || Math.abs(r.duration - args.duration) > 20) return 'duration';
   return null;
 }
 
 export async function findInstrumental(args, search = searchYoutube) {
-  const seen = new Set();
+  const seen = new Set(), candidates = [];
+  let errors = 0;
   for (const q of instrumentalQueries(args)) {
-    const picks = [];
-    for (const r of await search(q).catch(() => [])) {
+    let rows;
+    try { rows = await search(q); } catch { errors++; continue; }
+    for (const r of rows.slice(0, 20)) {
       if (seen.has(r.id)) continue;
       seen.add(r.id);
-      if (instrumentalRejection(args, r)) continue;
-      picks.push({ id: r.id, title: r.title, duration: r.duration, diff: Math.abs(r.duration - args.duration) });
+      const reason = instrumentalRejection(args, r);
+      if (r.id === args.id || !INST_RE.test(r.title) || !(r.duration > 0) || Math.abs(r.duration - args.duration) > 90) continue;
+      candidates.push({ id: r.id, title: r.title, channel: r.channel || '', duration: r.duration,
+        diff: r.duration - args.duration, qualified: !reason, reason });
     }
-    picks.sort((a, b) => a.diff - b.diff || a.id.localeCompare(b.id));
-    if (picks.length) return { alt: picks[0] };
   }
-  return { alt: null };
+  // A partial search is an upstream error, never a cached definite miss.
+  if (errors) throw new Error('Accompaniment search upstream unavailable; retry');
+  candidates.sort((a,b) => Number(b.qualified)-Number(a.qualified) || Math.abs(a.diff)-Math.abs(b.diff) || a.id.localeCompare(b.id));
+  return { alt: candidates.find(r => r.qualified) || null, candidates: candidates.slice(0, 12) };
 }
 
 // Fold the common traditional/simplified pairs seen in song titles so 周杰倫 matches 周杰伦.

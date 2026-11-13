@@ -41,3 +41,11 @@ Some browsers (including iOS) require device controls. This does not control
 microphone gain or vehicle system volume. First-frame audio behavior, Tesla
 microphone balance and real vehicle acceptance require physical-device testing.
 No dependencies, server/room/library/matching changes or upstream sync.
+
+## 2026-11-13 Accompaniment repair
+
+- Bounded metadata fixes for observed Eric Chou / Shan Yichun titles and high-quality tags; lyrics identity is unchanged.
+- Keep the 20-second automatic limit; show bounded alternatives with real metadata, duration delta, audition and explicit per-song choice.
+- Distinguish search/no-match/upstream/load/playback states; confirm playback by correct video ID and advancing time, retain YouTube error codes.
+- Restore the saved original position on failure, support retry, guard song-change races and reapply existing volume controls.
+- Regression fixtures use exact original search records. YouTube login/embed/region/rights restrictions are not bypassed; duration ratio does not guarantee lyric alignment.

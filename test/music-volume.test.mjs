@@ -56,11 +56,12 @@ test('real app load path reapplies preference before/after every video load incl
   h.player.loadVideoById=id=>{events.push(id);h.player.volume=100;};
   const ctx={playerReady:true,player:h.player,musicVolume:h.control};vm.createContext(ctx);vm.runInContext(load,ctx);
   ctx.loadVideo('song');assert.equal(h.player.volume,23);assert.deepEqual(events,['volume','song','volume']);
-  const toggle=app.slice(app.indexOf('  async function toggleVocal()'),app.indexOf("  $('#vocal-fab').addEventListener"));
-  const song={id:'original',duration:200};Object.assign(ctx,{S:{current:song},findAlt:async()=>({id:'backing',duration:200}),nowMs:()=>10000,Date,clock:{},updateVocalFab(){},toast(){},t:k=>k});vm.runInContext(toggle,ctx);
-  await ctx.toggleVocal();assert.equal(events.at(-2).videoId,'backing');assert.equal(h.player.volume,23);
-  await ctx.toggleVocal();assert.equal(events.at(-2).videoId,'original');assert.equal(h.player.volume,23);
-  const fallback=app.slice(app.indexOf('  function onPlayerError(e)'),app.indexOf('  function play(song,'));vm.runInContext(fallback,ctx);ctx.S.inst=true;ctx.onPlayerError({data:150});assert.equal(events.at(-2).videoId,'original');assert.equal(h.player.volume,23);
+  const song={id:'original',duration:200};
+  Object.assign(ctx,{S:{current:song,inst:false},WeakMap,URLSearchParams,Date,localStorage:{getItem:()=>null},document:{querySelector:()=>null},setInterval:()=>1,clearInterval(){},nowMs:()=>10000,clock:{},lastAutoResume:0,$:()=>({classList:{toggle(){}}}),icon:()=>'',esc:x=>x});
+  vm.runInContext(app.slice(app.indexOf('  const altCache ='),app.indexOf("  $('#vocal-fab').addEventListener")),ctx);
+  ctx.startAlt(song,{id:'backing',duration:200});assert.equal(events.at(-2).videoId,'backing');assert.equal(h.player.volume,23);
+  ctx.restoreOriginal();assert.equal(events.at(-2).videoId,'original');assert.equal(h.player.volume,23);
+  ctx.startAlt(song,{id:'backing',duration:200});ctx.failAlt('YouTube 150');assert.equal(events.at(-2).videoId,'original');assert.equal(h.player.volume,23);
 });
 test('app pending song applies saved gain on ready before load, then state changes reapply', () => {
   const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');

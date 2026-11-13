@@ -46,15 +46,15 @@ test('observed official metadata distinguishes original and duet accompaniment',
 test('bounded queries, deduplication, ranking, fail closed',async()=>{
  let queries=[];
  const result=await findInstrumental(target,async q=>{queries.push(q);return queries.length<3?[row('张学友 - 甲乙丙丁 伴奏')]:[row('李佳薇 - 甲乙丙丁 伴奏',228,'','long'),row('李佳薇 - 甲乙丙丁 karaoke',211,'','closest')];});
- assert.equal(queries.length,3);assert.equal(result.alt.id,'closest');
+ assert.equal(queries.length,4);assert.equal(result.alt.id,'closest');
  queries=[];assert.equal((await findInstrumental(target,async q=>{queries.push(q);return [];})).alt,null);assert.equal(queries.length,4);
- let n=0;await findInstrumental({title:'Artist - Song',duration:200},async()=>{n++;throw Error('offline');});assert.equal(n,2);
+ let n=0;await assert.rejects(findInstrumental({title:'Artist - Song',duration:200},async()=>{n++;throw Error('offline');}));assert.equal(n,2);
 });
 test('frontend ignores persisted legacy misses/promises, coalesces requests and expires misses',async()=>{
  const src=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
  const a=src.indexOf('  const altCache ='),b=src.indexOf('  function updateVocalFab()',a);
  let calls=0,now=1000,fail=false;
- const context=vm.createContext({URLSearchParams,WeakMap,Date:{now:()=>now},api:async()=>{calls++;if(fail)throw Error('offline');return {alt:null};},S:{current:null},updateVocalFab:()=>{}});
+ const context=vm.createContext({URLSearchParams,WeakMap,Promise,setTimeout:()=>1,Date:{now:()=>now},api:async()=>{calls++;if(fail)throw Error('offline');return {alt:null};},S:{current:null},updateVocalFab:()=>{}});
  vm.runInContext(src.slice(a,b)+';globalThis.findAlt=findAlt;',context);
  const song={...target,alt:null,_altP:{}};
  await Promise.all([context.findAlt(song),context.findAlt(song)]);assert.equal(calls,1);assert.equal(song._altP,undefined);

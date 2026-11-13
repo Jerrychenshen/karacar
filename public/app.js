@@ -286,40 +286,42 @@
     const wasPlaying = S.playing;
     S.playing = st === 1;
     if (st === 1) { clock.base = rawMs(); clock.at = performance.now(); S.userPaused = false; }
-    if (st === 0) next(true);
+    if (st === 0 && !altTimer) next(true);
     // Tesla pauses video while the car is moving. If the pause wasn't ours, hide the video
     // and resume so the audio and lyrics continue.
     if (st === 2 && wasPlaying && !S.userPaused && S.mode === 'video' && Date.now() - lastAutoResume > 10000) {
       lastAutoResume = Date.now();
       setMode('lyrics');
       toast(t('driving_hint'), 4500);
-      setTimeout(() => { if (!S.userPaused) player.playVideo(); }, 400);
+      const song = S.current;
+      setTimeout(() => { if (S.current === song && !S.userPaused) player.playVideo(); }, 400);
     }
     updatePlayButtons();
     renderTabs();
   }
 
   function onPlayerError(e) {
-    if (S.inst) {
-      // Backing track can't be embedded: go back to the original instead of skipping the song.
-      const at = nowMs() / 1000;
-      S.current.alt = null;
-      S.inst = false;
-      lastAutoResume = Date.now();
-      loadVideo({ videoId: S.current.id, startSeconds: at });
+    const reported = e.target?.getVideoData?.().video_id;
+    const expected = S.inst ? S.current?.activeAlt?.id : S.current?.id;
+    if (reported && expected && reported !== expected) return;
+    if (S.inst) { failAlt(`YouTube ${e.data}`); return; }
+    if (S.current) {
+      S.current.playbackError = S.current.altState = `播放失败 · YouTube ${e.data}`;
       updateVocalFab();
-      toast(t('no_inst'), 3000);
-      return;
     }
-    const blocked = e.data === 101 || e.data === 150 || e.data === 153;
-    toast(t(blocked ? 'embed_blocked' : 'video_error'), 4000);
-    setTimeout(() => next(true), 1800);
+    toast(`YouTube ${e.data} · 播放失败，请重试或换曲`, 6000);
+    // Preserve automatic advancement when a next song exists; keep errors with an empty queue.
+    const song = S.current, pl = S.context && getPl(S.context.id);
+    if (S.queue?.length || (S.autoplay && pl && S.context.index + 1 < pl.songs.length)) {
+      setTimeout(() => { if (S.current === song && !S.inst) next(true); }, 1800);
+    }
   }
 
   function play(song, opts) {
     opts = opts || {};
     if (S.current && !opts.fromHistory) { S.history.push(S.current); if (S.history.length > 50) S.history.shift(); }
     if (opts.context !== undefined) S.context = opts.context;
+    cancelAlt(); document.querySelector('#alt-dialog')?.remove();
     S.current = songMeta(song);
     S.playing = false;
     S.userPaused = false;
@@ -669,45 +671,98 @@
   // ─────────────────────────────────────────────────────────────────────────
   // Runtime-only cache: never serialize promises or trust old saved alt=null.
   const altCache = new WeakMap();
+  let altTimer = null, altAttempt = 0, savedOriginal = 0;
+  function cancelAlt() { altAttempt++; clearInterval(altTimer); altTimer = null; }
   async function findAlt(song) {
-    const now = Date.now();
     const hit = altCache.get(song);
-    if (hit && hit.expires > now) return hit.promise;
-    delete song.alt;
-    delete song._altP;
-    const entry = { expires: now + 5 * 60 * 1000 };
-    entry.promise = api('/api/instrumental?' + new URLSearchParams({ title: song.title, channel: song.channel || '', duration: song.duration || 0, id: song.id }))
-      .then((d) => { song.alt = d.alt; return d.alt; })
-      .catch(() => { altCache.delete(song); return undefined; })
+    if (hit && hit.expires > Date.now()) return hit.promise;
+    delete song.alt; delete song._altP;
+    song.altState = '查找伴奏中…';
+    if (S.current === song) updateVocalFab();
+    const entry = { expires: Date.now() + 300000 };
+    entry.promise = Promise.race([api('/api/instrumental?' + new URLSearchParams({ title: song.title, channel: song.channel || '', duration: song.duration || 0, id: song.id })), new Promise((_, reject) => setTimeout(() => reject(Error('search timeout')), 45000))])
+      .then(d => { song.alt = d.alt; song.altCandidates = d.candidates || []; song.altState = d.alt ? '伴奏候选就绪' : '无合格候选 · 可选其他伴奏'; return d.alt; })
+      .catch(() => { altCache.delete(song); song.altState = '搜索失败 · 请重试'; return undefined; })
       .finally(() => { if (S.current === song) updateVocalFab(); });
     altCache.set(song, entry);
     return entry.promise;
   }
   function updateVocalFab() {
-    const b = $('#vocal-fab');
-    const s = S.current;
-    b.innerHTML = icon('mic', 24) + esc(t(S.inst ? 'vocal_off' : 'vocal_on'));
+    const b = $('#vocal-fab'), s = S.current;
+    b.innerHTML = icon('mic', 24) + esc(S.inst ? (s?.altState || '伴奏加载中…') : (s?.playbackError || s?.altState || t('vocal_on')));
     b.classList.toggle('on', !!S.inst);
     b.classList.toggle('off', !!s && s.alt === null);
   }
-  async function toggleVocal() {
-    const s = S.current;
-    if (!s || !playerReady) return;
-    const alt = await findAlt(s);
+  function restoreOriginal(failure) {
+    const s = S.current; if (!s) return;
+    const at = failure || altTimer ? savedOriginal : nowMs() / 1000;
+    cancelAlt(); S.inst = false; S.instScale = 1;
+    lastAutoResume = Date.now(); clock.lastRaw = -1;
+    loadVideo({ videoId: s.id, startSeconds: Math.max(0, at) });
+    s.playbackError = failure || ''; s.altState = failure || '已恢复原唱'; updateVocalFab();
+  }
+  function failAlt(reason) {
+    restoreOriginal(`伴奏播放失败 · ${reason} · 可重试/其他伴奏`);
+  }
+  function startAlt(s, alt, audition = false) {
     if (S.current !== s) return;
-    if (!alt) { toast(t('no_inst'), 2500); return; }
-    const at = nowMs();
-    // Swapping videos fires a pause; don't mistake it for the car pausing video while driving.
-    lastAutoResume = Date.now();
-    S.inst = !S.inst;
-    S.instScale = S.inst && alt.duration && s.duration && Math.abs(alt.duration - s.duration) > 2 ? alt.duration / s.duration : 1;
-    const start = S.inst ? at / 1000 * S.instScale : at / 1000;
-    clock.lastRaw = -1;
-    loadVideo({ videoId: S.inst ? alt.id : s.id, startSeconds: Math.max(0, start) });
-    updateVocalFab();
-    toast(t(S.inst ? 'inst_on' : 'inst_off'), 1500);
+    if (!S.inst) savedOriginal = nowMs() / 1000;
+    cancelAlt(); const attempt = altAttempt;
+    S.inst = true; s.activeAlt = alt; s.playbackError = '';
+    S.instScale = alt.duration && s.duration && Math.abs(alt.duration-s.duration)>2 ? alt.duration/s.duration : 1;
+    lastAutoResume = Date.now(); clock.lastRaw = -1;
+    s.altState = audition ? '试听加载中…' : '伴奏加载中…'; updateVocalFab();
+    loadVideo({ videoId: alt.id, startSeconds: savedOriginal*S.instScale });
+    const started = Date.now(); let first = null;
+    altTimer = setInterval(() => {
+      if (S.current !== s || attempt !== altAttempt) return;
+      const id = player.getVideoData?.().video_id, time = player.getCurrentTime();
+      if (id === alt.id && player.getPlayerState() === 1) {
+        if (first === null) first = time;
+        if (time > first + 0.5) {
+          clearInterval(altTimer); altTimer = null;
+          s.altState = audition ? '试听播放中 · 请确认版本/对齐' : '伴奏播放中 · 请确认歌词对齐'; updateVocalFab(); return;
+        }
+      }
+      if (Date.now()-started > 15000) failAlt('加载超时');
+    }, 300);
+  }
+  function chooseAlt(s) {
+    document.querySelector('#alt-dialog')?.remove();
+    const dialog = document.createElement('dialog'); dialog.id = 'alt-dialog';
+    dialog.style.cssText = 'max-width:90vw;max-height:80vh;overflow:auto;background:#18202c;color:white;padding:20px;border-radius:12px';
+    dialog.innerHTML = '<h3>其他伴奏</h3><p>请试听并确认歌曲、歌手、版本和歌词对齐。时长比例不能保证对齐。</p><div id="alt-rows"></div><button id="alt-close">关闭</button>';
+    document.body.append(dialog);
+    for (const alt of s.altCandidates || []) {
+      const row = document.createElement('p');
+      row.innerHTML = `<strong>${esc(alt.title)}</strong><br>${esc(alt.channel)} · ${alt.duration}秒 · 差${alt.diff > 0 ? '+' : ''}${alt.diff}秒 · ${alt.qualified ? '合格候选' : '需人工确认: '+esc(alt.reason)}<br><button>试听</button> <button>仅本曲使用</button>`;
+      const buttons = row.querySelectorAll('button');
+      buttons[0].onclick = () => startAlt(s, alt, true);
+      buttons[1].onclick = () => {
+        if (S.current !== s) return;
+        try { const choices = JSON.parse(localStorage.getItem('karacar-alt-choices') || '{}'); choices[s.id] = alt; localStorage.setItem('karacar-alt-choices', JSON.stringify(choices)); } catch {}
+        startAlt(s, alt); dialog.close(); dialog.remove();
+      };
+      dialog.querySelector('#alt-rows').append(row);
+    }
+    if (!s.altCandidates?.length) dialog.querySelector('#alt-rows').textContent = '暂无候选，请重试搜索。';
+    dialog.querySelector('#alt-close').onclick = () => { dialog.close(); dialog.remove(); };
+    dialog.showModal();
+  }
+  async function toggleVocal() {
+    const s = S.current; if (!s || !playerReady) return;
+    if (S.inst) { restoreOriginal(); return; }
+    const alt = await findAlt(s); if (S.current !== s) return;
+    let choice;
+    try { choice = JSON.parse(localStorage.getItem('karacar-alt-choices') || '{}')[s.id]; } catch {}
+    if (choice && /^[\w-]{11}$/.test(choice.id)) { startAlt(s, choice); return; }
+    if (!alt) { if (alt === null) chooseAlt(s); return; }
+    startAlt(s, alt);
   }
   $('#vocal-fab').addEventListener('click', toggleVocal);
+  const otherAlt = document.createElement('button'); otherAlt.id = 'other-alt'; otherAlt.className = 'fab'; otherAlt.textContent = '其他伴奏';
+  $('#vocal-fab').after(otherAlt);
+  otherAlt.addEventListener('click', async () => { const s = S.current; if (!s) return; await findAlt(s); if (S.current === s) chooseAlt(s); });
 
   // Animation loop
   let lastUi = 0;

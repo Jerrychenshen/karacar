@@ -490,3 +490,8 @@ body.karaoke .controls { max-height: calc(100% - 48px); overflow-y: auto; }
 @media (max-width: 760px) {
   .controls .seg button { padding: 0 8px; font-size: 14px; gap: 4px; }
 }
+
+/* Accompaniment states remain readable on the car screen. */
+.stage-fabs { flex-wrap: wrap; max-width: calc(100% - 24px); }
+#vocal-fab { height: auto; min-height: 52px; max-width: 100%; white-space: normal; text-align: left; padding: 10px 16px; }
+#alt-dialog button { margin: 5px; min-height: 44px; padding: 8px 14px; }
